@@ -26,8 +26,10 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 import static org.apache.ratis.conf.ConfUtils.*;
 
@@ -48,14 +50,14 @@ public interface RaftServerConfigKeys {
     setFiles(properties::setFiles, STORAGE_DIR_KEY, storageDir);
   }
 
-  String SLEEP_DEVIATION_THRESHOLD = PREFIX + ".sleep.deviation.threshold";
+  String SLEEP_DEVIATION_THRESHOLD_KEY = PREFIX + ".sleep.deviation.threshold";
   int SLEEP_DEVIATION_THRESHOLD_DEFAULT = 300;
   static int sleepDeviationThreshold(RaftProperties properties) {
-    return getInt(properties::getInt, SLEEP_DEVIATION_THRESHOLD,
+    return getInt(properties::getInt, SLEEP_DEVIATION_THRESHOLD_KEY,
         SLEEP_DEVIATION_THRESHOLD_DEFAULT, getDefaultLog());
   }
   static void setSleepDeviationThreshold(RaftProperties properties, int thresholdMs) {
-    setInt(properties::setInt, SLEEP_DEVIATION_THRESHOLD, thresholdMs);
+    setInt(properties::setInt, SLEEP_DEVIATION_THRESHOLD_KEY, thresholdMs);
   }
 
   /**
@@ -216,6 +218,32 @@ public interface RaftServerConfigKeys {
       setInt(properties::setInt, FORCE_SYNC_NUM_KEY, forceSyncNum);
     }
 
+    /** The policy to handle corrupted raft log. */
+    enum CorruptionPolicy {
+      /** Rethrow the exception. */
+      EXCEPTION,
+      /** Print a warn log message and return all uncorrupted log entries up to the corruption. */
+      WARN_AND_RETURN;
+
+      public static CorruptionPolicy getDefault() {
+        return EXCEPTION;
+      }
+
+      public static <T> CorruptionPolicy get(T supplier, Function<T, CorruptionPolicy> getMethod) {
+        return Optional.ofNullable(supplier).map(getMethod).orElse(getDefault());
+      }
+    }
+
+    String CORRUPTION_POLICY_KEY = PREFIX + ".corruption.policy";
+    CorruptionPolicy CORRUPTION_POLICY_DEFAULT = CorruptionPolicy.getDefault();
+    static CorruptionPolicy corruptionPolicy(RaftProperties properties) {
+      return get(properties::getEnum,
+          CORRUPTION_POLICY_KEY, CORRUPTION_POLICY_DEFAULT, getDefaultLog());
+    }
+    static void setCorruptionPolicy(RaftProperties properties, CorruptionPolicy corruptionPolicy) {
+      set(properties::setEnum, CORRUPTION_POLICY_KEY, corruptionPolicy);
+    }
+
     interface StateMachineData {
       String PREFIX = Log.PREFIX + ".statemachine.data";
 
@@ -336,14 +364,13 @@ public interface RaftServerConfigKeys {
       setLong(properties::setLong, AUTO_TRIGGER_THRESHOLD_KEY, autoTriggerThreshold);
     }
 
-    String RETENTION_POLICY_KEY = PREFIX + ".retention.num.files";
-    int DEFAULT_ALL_SNAPSHOTS_RETAINED = -1;
-    static int snapshotRetentionPolicy(RaftProperties raftProperties) {
-      return getInt(raftProperties::getInt,
-          RETENTION_POLICY_KEY, DEFAULT_ALL_SNAPSHOTS_RETAINED, getDefaultLog());
+    String RETENTION_FILE_NUM_KEY = PREFIX + ".retention.file.num";
+    int RETENTION_FILE_NUM_DEFAULT = -1;
+    static int retentionFileNum(RaftProperties raftProperties) {
+      return getInt(raftProperties::getInt, RETENTION_FILE_NUM_KEY, RETENTION_FILE_NUM_DEFAULT, getDefaultLog());
     }
-    static void setSnapshotRetentionPolicy(RaftProperties properties, int numSnapshotFilesRetained) {
-      setInt(properties::setInt, RETENTION_POLICY_KEY, numSnapshotFilesRetained);
+    static void setRetentionFileNum(RaftProperties properties, int numSnapshotFilesRetained) {
+      setInt(properties::setInt, RETENTION_FILE_NUM_KEY, numSnapshotFilesRetained);
     }
   }
 

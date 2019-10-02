@@ -76,6 +76,7 @@ class StateMachineUpdater implements Runnable {
   private final AtomicReference<Long> stopIndex = new AtomicReference<>();
   private volatile State state = State.RUNNING;
   private SnapshotRetentionPolicy snapshotRetentionPolicy;
+  private StateMachineMetrics stateMachineMetrics = null;
 
   StateMachineUpdater(StateMachine stateMachine, RaftServerImpl server,
       ServerState serverState, long lastAppliedIndex, RaftProperties properties) {
@@ -92,7 +93,7 @@ class StateMachineUpdater implements Runnable {
 
     final boolean autoSnapshot = RaftServerConfigKeys.Snapshot.autoTriggerEnabled(properties);
     this.autoSnapshotThreshold = autoSnapshot? RaftServerConfigKeys.Snapshot.autoTriggerThreshold(properties): null;
-    int numSnapshotFilesRetained = RaftServerConfigKeys.Snapshot.snapshotRetentionPolicy(properties);
+    final int numSnapshotFilesRetained = RaftServerConfigKeys.Snapshot.retentionFileNum(properties);
     this.snapshotRetentionPolicy = new SnapshotRetentionPolicy() {
       @Override
       public int getNumSnapshotsRetained() {
@@ -103,7 +104,17 @@ class StateMachineUpdater implements Runnable {
   }
 
   void start() {
+    //wait for RaftServerImpl and ServerState constructors to complete
+    initializeMetrics();
     updater.start();
+  }
+
+  private void initializeMetrics() {
+    if (stateMachineMetrics == null) {
+      stateMachineMetrics =
+          StateMachineMetrics.getStateMachineMetrics(
+              server, appliedIndex, stateMachine);
+    }
   }
 
   private void stop() {

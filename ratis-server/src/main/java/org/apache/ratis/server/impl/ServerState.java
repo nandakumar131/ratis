@@ -105,7 +105,8 @@ public class ServerState implements Closeable {
     // use full uuid string to create a subdirectory
     final File dir = chooseStorageDir(RaftServerConfigKeys.storageDirs(prop),
         group.getGroupId().getUuid().toString());
-    storage = new RaftStorage(dir, RaftServerConstants.StartupOption.REGULAR);
+    storage = new RaftStorage(dir, RaftServerConstants.StartupOption.REGULAR,
+        RaftServerConfigKeys.Log.corruptionPolicy(prop));
     snapshotManager = new SnapshotManager(storage, id);
 
     long lastApplied = initStatemachine(stateMachine, group.getGroupId());
@@ -249,6 +250,7 @@ public class ServerState implements Closeable {
         Timestamp previous = lastNoLeaderTime;
         lastNoLeaderTime = null;
         suffix = ", leader elected after " + previous.elapsedTimeMs() + "ms";
+        server.getStateMachine().notifyLeaderChanged(server.getGroup().getGroupId(), newLeaderId);
       }
       LOG.info("{}: change Leader from {} to {} at term {} for {}{}",
           getMemberId(), leaderId, newLeaderId, getCurrentTerm(), op, suffix);
