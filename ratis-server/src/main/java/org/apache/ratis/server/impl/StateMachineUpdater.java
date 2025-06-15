@@ -43,6 +43,7 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.LongStream;
@@ -240,6 +241,8 @@ class StateMachineUpdater implements Runnable {
   }
 
   private CompletableFuture<Void> applyLog(CompletableFuture<Void> applyLogFutures) throws RaftLogIOException {
+    final Timekeeper timer = stateMachineMetrics.get().getStatemachineApplyTransactionTimer();
+    final Optional<Timekeeper.Context> timerContext = Optional.ofNullable(timer).map(Timekeeper::time);
     final long committed = raftLog.getLastCommittedIndex();
     for(long applied; (applied = getLastAppliedIndex()) < committed && state == State.RUNNING && !shouldStop(); ) {
       final long nextIndex = applied + 1;
@@ -261,7 +264,10 @@ class StateMachineUpdater implements Runnable {
             return null;
           });
           applyLogFutures = applyLogFutures.thenCombine(exceptionHandledFuture, (v, message) -> null);
-          f.thenAccept(m -> notifyAppliedIndex(incremented));
+          f.thenAccept(m -> {
+            notifyAppliedIndex(incremented);
+            timerContext.ifPresent(Timekeeper.Context::stop);
+          });;
         } else {
           notifyAppliedIndex(incremented);
         }

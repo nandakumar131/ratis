@@ -395,6 +395,7 @@ public final class SegmentedRaftLog extends RaftLogBase {
       LOG.trace("{}: appendEntry {}", getName(), LogProtoUtils.toLogEntryString(entry));
     }
     try(AutoCloseableLock writeLock = writeLock()) {
+      final Timekeeper.Context appendEntryLogicContext = getRaftLogMetrics().startAppendEntryLogicTimer();
       final Timekeeper.Context appendEntryTimerContext = getRaftLogMetrics().startAppendEntryTimer();
       validateLogEntry(entry);
       final LogSegment currentOpenSegment = cache.getOpenSegment();
@@ -420,6 +421,8 @@ public final class SegmentedRaftLog extends RaftLogBase {
         fileLogWorker.rollLogSegment(currentOpenSegment);
         cacheEviction.signal();
       }
+      appendEntryLogicContext.stop();
+      final Timekeeper.Context appendEntryAddToQueueContext = getRaftLogMetrics().startAppendEntryAddingToQueueTimer();
 
       // If the entry has state machine data, then the entry should be inserted
       // to statemachine first and then to the cache. Not following the order
@@ -433,6 +436,7 @@ public final class SegmentedRaftLog extends RaftLogBase {
       } else {
         cache.appendEntry(entry, LogSegment.Op.WRITE_CACHE_WITHOUT_STATE_MACHINE_CACHE);
       }
+      appendEntryAddToQueueContext.stop();
       writeFuture.whenComplete((clientReply, exception) -> appendEntryTimerContext.stop());
       return writeFuture;
     } catch (Exception e) {

@@ -31,4 +31,5 @@ public interface RaftLogMetrics {
   /** Write statemachine data timeout */
   default void onStateMachineDataWriteTimeout() {
   }
+
 }

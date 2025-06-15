@@ -34,6 +34,7 @@ public class SegmentedRaftLogMetrics extends RaftLogMetricsBase {
   /////////////////////////////
   /** Time taken to flush log. */
   public static final String RAFT_LOG_FLUSH_TIME = "flushTime";
+  public static final String RAFT_LOG_WRITE_TIME = "writeTime";
   /** Number of times of log flushed. */
   public static final String RAFT_LOG_FLUSH_COUNT = "flushCount";
   /** Time taken to log sync. */
@@ -57,12 +58,12 @@ public class SegmentedRaftLogMetrics extends RaftLogMetricsBase {
   /** Total time taken to append a raft log entry */
   public static final String RAFT_LOG_APPEND_ENTRY_LATENCY = "appendEntryLatency";
   /** Time spent by a Raft log operation in the queue. */
-  public static final String RAFT_LOG_TASK_QUEUE_TIME = "enqueuedTime";
+  public static final String RAFT_LOG_TASK_QUEUE_TIME = "%sEnqueuedTime";
   /**
    * Time taken for a Raft log operation to get into the queue after being requested.
    * This is the time that it has to wait for the queue to be non-full.
    */
-  public static final String RAFT_LOG_TASK_ENQUEUE_DELAY = "queueingDelay";
+  public static final String RAFT_LOG_TASK_ENQUEUE_DELAY = "%sQueueingDelay";
   /** Time taken for a Raft log operation to complete execution. */
   public static final String RAFT_LOG_TASK_EXECUTION_TIME = "%sExecutionTime";
   /** Number of entries appended to the raft log */
@@ -82,9 +83,8 @@ public class SegmentedRaftLogMetrics extends RaftLogMetricsBase {
   public static final String RAFT_LOG_LOAD_SEGMENT_LATENCY = "segmentLoadLatency";
 
   private final Timekeeper flushTimer = getRegistry().timer(RAFT_LOG_FLUSH_TIME);
+  private final Timekeeper writeTimer = getRegistry().timer(RAFT_LOG_WRITE_TIME);
   private final Timekeeper syncTimer = getRegistry().timer(RAFT_LOG_SYNC_TIME);
-  private final Timekeeper enqueuedTimer = getRegistry().timer(RAFT_LOG_TASK_QUEUE_TIME);
-  private final Timekeeper queuingDelayTimer = getRegistry().timer(RAFT_LOG_TASK_ENQUEUE_DELAY);
 
   private final Timekeeper appendEntryTimer = getRegistry().timer(RAFT_LOG_APPEND_ENTRY_LATENCY);
   private final Timekeeper readEntryTimer = getRegistry().timer(RAFT_LOG_READ_ENTRY_LATENCY);
@@ -102,6 +102,8 @@ public class SegmentedRaftLogMetrics extends RaftLogMetricsBase {
       RAFT_LOG_STATEMACHINE_DATA_READ_TIMEOUT_COUNT);
 
   private final Map<Class<?>, Timekeeper> taskClassTimers = new ConcurrentHashMap<>();
+  private final Map<Class<?>, Timekeeper> queuingDelayTimer = new ConcurrentHashMap<>();
+  private final Map<Class<?>, Timekeeper> enqueuedTimer = new ConcurrentHashMap<>();
 
   public SegmentedRaftLogMetrics(RaftGroupMemberId serverId) {
     super(serverId);
@@ -135,6 +137,10 @@ public class SegmentedRaftLogMetrics extends RaftLogMetricsBase {
     return Timekeeper.start(flushTimer);
   }
 
+  public UncheckedAutoCloseable startLogWriteTimer() {
+    return Timekeeper.start(writeTimer);
+  }
+
   public Timekeeper getSyncTimer() {
     return syncTimer;
   }
@@ -159,12 +165,22 @@ public class SegmentedRaftLogMetrics extends RaftLogMetricsBase {
     return appendEntryTimer.time();
   }
 
-  public Timekeeper getEnqueuedTimer() {
-    return enqueuedTimer;
+  private Timekeeper newEnqueuedTimer(Class<?> taskClass) {
+    return getRegistry().timer(String.format(RAFT_LOG_TASK_QUEUE_TIME,
+        JavaUtils.getClassSimpleName(taskClass).toLowerCase()));
   }
 
-  public UncheckedAutoCloseable startQueuingDelayTimer() {
-    return Timekeeper.start(queuingDelayTimer);
+  public Timekeeper getEnqueuedTimer(Class<?> taskClass) {
+    return enqueuedTimer.computeIfAbsent(taskClass, this::newEnqueuedTimer);
+  }
+
+  private Timekeeper newQueuingDelayTimer(Class<?> taskClass) {
+    return getRegistry().timer(String.format(RAFT_LOG_TASK_ENQUEUE_DELAY,
+        JavaUtils.getClassSimpleName(taskClass).toLowerCase()));
+  }
+
+  public UncheckedAutoCloseable startQueuingDelayTimer(Class<?> taskClass) {
+    return Timekeeper.start(queuingDelayTimer.computeIfAbsent(taskClass, this::newQueuingDelayTimer));
   }
 
   private Timekeeper newTaskExecutionTimer(Class<?> taskClass) {
@@ -195,5 +211,53 @@ public class SegmentedRaftLogMetrics extends RaftLogMetricsBase {
   @Override
   public void onStateMachineDataReadTimeout() {
     numStateMachineDataReadTimeout.inc();
+  }
+
+  public static final String RAFT_LOG_METADATA_APPEND_LATENCY = "metadataAppendLatency";
+
+  private final Timekeeper metadataAppendTimer = getRegistry().timer(RAFT_LOG_METADATA_APPEND_LATENCY);
+
+  public Timekeeper.Context startMetadataAppendTimer() {
+    return metadataAppendTimer.time();
+  }
+
+  public static final String RAFT_LOG_TRANSACTION_APPEND_ENTRY_LATENCY = "transactionAppendLatency";
+
+  private final Timekeeper transactionAppendTimer = getRegistry().timer(RAFT_LOG_TRANSACTION_APPEND_ENTRY_LATENCY);
+
+  public Timekeeper.Context startTransactionAppendTimer() {
+    return transactionAppendTimer.time();
+  }
+
+  public static final String RAFT_LOG_UPDATE_FLUSH_INDEX_LATENCY = "transactionAppendLatency";
+
+  private final Timekeeper updateFlushIndexTimer = getRegistry().timer(RAFT_LOG_UPDATE_FLUSH_INDEX_LATENCY);
+
+  public Timekeeper.Context startUpdateFlushIndexTimer() {
+    return updateFlushIndexTimer.time();
+  }
+
+  public static final String RAFT_LOG_APPEND_ENTRY_LOGIC_LATENCY = "appendEntryLogicLatency";
+
+  private final Timekeeper appendEntryLogicTimer = getRegistry().timer(RAFT_LOG_APPEND_ENTRY_LOGIC_LATENCY);
+
+  public Timekeeper.Context startAppendEntryLogicTimer() {
+    return appendEntryLogicTimer.time();
+  }
+
+  public static final String RAFT_LOG_APPEND_ENTRY_ADDING_TO_QUEUE_LATENCY = "appendEntryAddingToQueueLatency";
+
+  private final Timekeeper appendEntryAddingToQueueTimer = getRegistry().timer(RAFT_LOG_APPEND_ENTRY_ADDING_TO_QUEUE_LATENCY);
+
+  public Timekeeper.Context startAppendEntryAddingToQueueTimer() {
+    return appendEntryAddingToQueueTimer.time();
+  }
+
+  public static final String RAFT_LOG_TASK_CREATION_LATENCY = "taskCreationLatency";
+
+  private final Timekeeper taskCreationTimer = getRegistry().timer(RAFT_LOG_TASK_CREATION_LATENCY);
+
+  public Timekeeper.Context startTaskCreationTimer() {
+    return taskCreationTimer.time();
   }
 }

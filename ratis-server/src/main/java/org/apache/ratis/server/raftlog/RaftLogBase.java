@@ -19,11 +19,13 @@ package org.apache.ratis.server.raftlog;
 
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.ratis.conf.RaftProperties;
+import org.apache.ratis.metrics.Timekeeper;
 import org.apache.ratis.proto.RaftProtos.LogEntryProto;
 import org.apache.ratis.protocol.RaftGroupMemberId;
 import org.apache.ratis.protocol.exceptions.StateMachineException;
 import org.apache.ratis.server.RaftConfiguration;
 import org.apache.ratis.server.RaftServerConfigKeys;
+import org.apache.ratis.server.metrics.SegmentedRaftLogMetrics;
 import org.apache.ratis.server.protocol.TermIndex;
 import org.apache.ratis.statemachine.TransactionContext;
 import org.apache.ratis.thirdparty.com.google.protobuf.ByteString;
@@ -170,6 +172,8 @@ public abstract class RaftLogBase implements RaftLog {
   }
 
   private long appendImpl(long term, TransactionContext operation) throws StateMachineException {
+    final Timekeeper.Context appendEntryTimerContext =
+        ((SegmentedRaftLogMetrics) getRaftLogMetrics()).startTransactionAppendTimer();
     checkLogState();
     try(AutoCloseableLock writeLock = writeLock()) {
       final long nextIndex = getNextIndex();
@@ -199,6 +203,7 @@ public abstract class RaftLogBase implements RaftLog {
           LOG.error("{}: Indices mismatched: returned index={} but nextIndex={} for log entry {}",
               name, returned, nextIndex, toLogEntryString(e));
         } else {
+          appendEntryTimerContext.stop();
           return; // no error
         }
 
@@ -218,6 +223,8 @@ public abstract class RaftLogBase implements RaftLog {
   }
 
   private long appendMetadataImpl(long term, long newCommitIndex) {
+    final Timekeeper.Context appendEntryTimerContext =
+        ((SegmentedRaftLogMetrics) getRaftLogMetrics()).startMetadataAppendTimer();
     checkLogState();
     if (!shouldAppendMetadata(newCommitIndex)) {
       return INVALID_LOG_INDEX;
@@ -228,7 +235,7 @@ public abstract class RaftLogBase implements RaftLog {
     try(AutoCloseableLock writeLock = writeLock()) {
       nextIndex = getNextIndex();
       entry = LogProtoUtils.toLogEntryProto(newCommitIndex, term, nextIndex);
-      appendEntry(entry);
+      appendEntry(entry).whenComplete((clientReply, exception) -> appendEntryTimerContext.stop());
     }
     lastMetadataEntry.set(entry);
     return nextIndex;

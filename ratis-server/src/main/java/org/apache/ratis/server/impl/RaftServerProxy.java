@@ -61,6 +61,7 @@ import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -70,14 +71,18 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 class RaftServerProxy implements RaftServer {
+
+  private AtomicLong totalTimeSpent = new AtomicLong();
   /**
    * A map: {@link RaftGroupId} -> {@link RaftServerImpl} futures.
    * <p>
@@ -199,6 +204,7 @@ class RaftServerProxy implements RaftServer {
   private final DataStreamServerRpc dataStreamServerRpc;
 
   private final ImplMap impls = new ImplMap();
+  private final Map<RaftGroupId, RaftServerImpl> impl = new HashMap<>();
   private final MemoizedSupplier<ExecutorService> implExecutor;
   private final MemoizedSupplier<ExecutorService> executor;
 
@@ -370,6 +376,16 @@ class RaftServerProxy implements RaftServer {
     return impls.get(groupId);
   }
 
+  RaftServerImpl getServer(RaftGroupId groupId)
+      throws ExecutionException, InterruptedException {
+    RaftServerImpl s = impl.get(groupId);
+    if (s == null) {
+      impl.put(groupId, getImplFuture(groupId).get());
+      s = impl.get(groupId);
+    }
+    return s;
+  }
+
   private RaftServerImpl getImpl(RaftRpcRequestProto proto) throws IOException {
     return getImpl(ProtoUtils.toRaftGroupId(proto.getRaftGroupId()));
   }
@@ -418,6 +434,7 @@ class RaftServerProxy implements RaftServer {
 
   @Override
   public void close() {
+    System.out.println("Total time spend in submit async in RaftServerProxy: " + totalTimeSpent + " ms.");
     lifeCycle.checkStateAndClose(() -> {
       LOG.info("{}: close", getId());
 
@@ -459,7 +476,14 @@ class RaftServerProxy implements RaftServer {
   @Override
   public RaftClientReply submitClientRequest(RaftClientRequest request)
       throws IOException {
-    return getImpl(request.getRaftGroupId()).submitClientRequest(request);
+    try {
+      long start = System.currentTimeMillis();
+      RaftClientReply reply = getServer(request.getRaftGroupId()).submitClientRequest(request);
+      totalTimeSpent.addAndGet(System.currentTimeMillis() - start);
+      return reply;
+    } catch (ExecutionException | InterruptedException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   @Override

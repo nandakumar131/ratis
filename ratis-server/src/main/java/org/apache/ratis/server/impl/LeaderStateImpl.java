@@ -18,6 +18,7 @@
 package org.apache.ratis.server.impl;
 
 import org.apache.ratis.conf.RaftProperties;
+import org.apache.ratis.metrics.Timekeeper;
 import org.apache.ratis.proto.RaftProtos;
 import org.apache.ratis.proto.RaftProtos.AppendEntriesRequestProto;
 import org.apache.ratis.proto.RaftProtos.CommitInfoProto;
@@ -112,10 +113,21 @@ class LeaderStateImpl implements LeaderState {
 
     private final Type type;
     private final Runnable handler;
+    private Timekeeper.Context queueTimerContext;
 
     StateUpdateEvent(Type type, Runnable handler) {
       this.type = type;
       this.handler = handler;
+    }
+
+    void startTimerOnEnqueue(Timekeeper queueTimer) {
+      queueTimerContext = queueTimer.time();
+    }
+
+    void stopTimerOnDequeue() {
+      if (queueTimerContext != null) {
+        queueTimerContext.stop();
+      }
     }
 
     void execute() {
@@ -156,6 +168,7 @@ class LeaderStateImpl implements LeaderState {
       }
       try {
         queue.put(event);
+        event.startTimerOnEnqueue(raftServerMetrics.getEnqueuedTimer());
       } catch (InterruptedException e) {
         LOG.info("{}: Interrupted when submitting {} ", this, event);
         Thread.currentThread().interrupt();
@@ -762,6 +775,7 @@ class LeaderStateImpl implements LeaderState {
         synchronized(server) {
           if (isRunning()) {
             if (event != null) {
+              event.stopTimerOnDequeue();
               event.execute();
             } else if (inStagingState()) {
               checkStaging();

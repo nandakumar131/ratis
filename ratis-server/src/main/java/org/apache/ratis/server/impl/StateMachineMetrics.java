@@ -24,6 +24,7 @@ import org.apache.ratis.metrics.RatisMetrics;
 import org.apache.ratis.metrics.Timekeeper;
 import org.apache.ratis.server.raftlog.RaftLogIndex;
 import org.apache.ratis.statemachine.StateMachine;
+import org.apache.ratis.util.UncheckedAutoCloseable;
 
 import java.util.function.LongSupplier;
 
@@ -38,6 +39,7 @@ public final class StateMachineMetrics extends RatisMetrics {
   public static final String STATEMACHINE_APPLIED_INDEX_GAUGE = "appliedIndex";
   public static final String STATEMACHINE_APPLY_COMPLETED_GAUGE = "applyCompletedIndex";
   public static final String STATEMACHINE_TAKE_SNAPSHOT_TIMER = "takeSnapshot";
+  public static final String STATEMACHINE_APPLY_TRANSACTION_TIMER = "applyTransaction";
 
   public static StateMachineMetrics getStateMachineMetrics(
       RaftServerImpl server, RaftLogIndex appliedIndex,
@@ -53,6 +55,8 @@ public final class StateMachineMetrics extends RatisMetrics {
   }
 
   private final Timekeeper takeSnapshotTimer = getRegistry().timer(STATEMACHINE_TAKE_SNAPSHOT_TIMER);
+  private final Timekeeper statemachineApplyTransactionTimer = getRegistry().timer(
+      STATEMACHINE_APPLY_TRANSACTION_TIMER);
 
   private StateMachineMetrics(String serverId, LongSupplier getApplied,
       LongSupplier getApplyCompleted) {
@@ -71,5 +75,10 @@ public final class StateMachineMetrics extends RatisMetrics {
   public Timekeeper getTakeSnapshotTimer() {
     return takeSnapshotTimer;
   }
+
+  public Timekeeper getStatemachineApplyTransactionTimer() {
+    return statemachineApplyTransactionTimer;
+  }
+
 
 }

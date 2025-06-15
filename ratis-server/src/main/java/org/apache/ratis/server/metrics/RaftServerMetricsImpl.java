@@ -37,6 +37,7 @@ import org.apache.ratis.protocol.RaftPeerId;
 import org.apache.ratis.metrics.RatisMetrics;
 import org.apache.ratis.server.RetryCache;
 import org.apache.ratis.thirdparty.com.google.common.annotations.VisibleForTesting;
+import org.apache.ratis.util.UncheckedAutoCloseable;
 
 /**
  * Metric Registry for Raft Group Server. One instance per leader/follower.
@@ -316,5 +317,32 @@ public final class RaftServerMetricsImpl extends RatisMetrics implements RaftSer
   @Override
   public void onSnapshotInstalled() {
     numInstallSnapshot.inc();
+  }
+
+
+  public static final String EVENT_QUEUE_DELAY = "eventQueueingDelay";
+
+
+  private final Timekeeper queuingDelayTimer = getRegistry().timer(
+      EVENT_QUEUE_DELAY);
+
+  public UncheckedAutoCloseable startEventQueuingDelayTimer() {
+    return Timekeeper.start(queuingDelayTimer);
+  }
+
+  public static final String EVENT_QUEUE_TIME = "eventQueueTime";
+
+  private final Timekeeper enqueuedTimer = getRegistry().timer(EVENT_QUEUE_TIME);
+
+  public Timekeeper getEnqueuedTimer() {
+    return enqueuedTimer;
+  }
+
+  public static final String STATEMACHINE_START_TRANSACTION_TIME = "stateMachineStartTransactionTime";
+
+  private final Timekeeper statemachineStartTransaction = getRegistry().timer(STATEMACHINE_START_TRANSACTION_TIME);
+
+  public UncheckedAutoCloseable startStatemachineStartTransaction() {
+    return Timekeeper.start(statemachineStartTransaction);
   }
 }

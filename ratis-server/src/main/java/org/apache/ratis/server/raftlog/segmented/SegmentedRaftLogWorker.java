@@ -276,7 +276,7 @@ class SegmentedRaftLogWorker {
    */
   private Task addIOTask(Task task) {
     LOG.debug("{} adds IO task {}", name, task);
-    try(UncheckedAutoCloseable ignored = raftLogMetrics.startQueuingDelayTimer()) {
+    try(UncheckedAutoCloseable ignored = raftLogMetrics.startQueuingDelayTimer(task.getClass())) {
       for(; !queue.offer(task, ONE_SECOND); ) {
         Preconditions.assertTrue(isAlive(),
             "the worker thread is not alive");
@@ -291,7 +291,7 @@ class SegmentedRaftLogWorker {
         Optional.ofNullable(server).ifPresent(RaftServer.Division::close);
       }
     }
-    task.startTimerOnEnqueue(raftLogMetrics.getEnqueuedTimer());
+    task.startTimerOnEnqueue(raftLogMetrics.getEnqueuedTimer(task.getClass()));
     return task;
   }
 
@@ -416,7 +416,9 @@ class SegmentedRaftLogWorker {
   }
 
   private void updateFlushedIndexIncreasingly() {
+    Timekeeper.Context context = raftLogMetrics.startUpdateFlushIndexTimer();
     updateFlushedIndexIncreasingly(lastWrittenIndex);
+    context.stop();
   }
 
   private void updateFlushedIndexIncreasingly(long index) {
@@ -449,7 +451,10 @@ class SegmentedRaftLogWorker {
   }
 
   Task writeLogEntry(LogEntryProto entry, TransactionContext context) {
-    return addIOTask(new WriteLog(entry, context));
+    Timekeeper.Context timer = raftLogMetrics.startTaskCreationTimer();
+    Task task = new WriteLog(entry, context);
+    timer.stop();
+    return addIOTask(task);
   }
 
   Task truncate(TruncationSegments ts, long index) {
@@ -555,9 +560,13 @@ class SegmentedRaftLogWorker {
       Preconditions.assertTrue(out != null);
       Preconditions.assertTrue(lastWrittenIndex + 1 == entry.getIndex(),
           "lastWrittenIndex == %s, entry == %s", lastWrittenIndex, entry);
-      out.write(entry);
-      lastWrittenIndex = entry.getIndex();
-      pendingFlushNum++;
+
+      // Write to buffer
+      try (UncheckedAutoCloseable ignored = raftLogMetrics.startLogWriteTimer()) {
+        out.write(entry);
+        lastWrittenIndex = entry.getIndex();
+        pendingFlushNum++;
+      }
       flushIfNecessary();
     }
 
