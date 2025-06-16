@@ -20,7 +20,9 @@ package org.apache.ratis.server.leader;
 import org.apache.ratis.proto.RaftProtos.AppendEntriesReplyProto;
 import org.apache.ratis.proto.RaftProtos.AppendEntriesRequestProto;
 import org.apache.ratis.proto.RaftProtos.LogEntryProto;
+import org.apache.ratis.protocol.RaftClientRequest;
 import org.apache.ratis.server.protocol.TermIndex;
+import org.apache.ratis.statemachine.TransactionContext;
 import org.apache.ratis.util.JavaUtils;
 
 import java.util.List;
@@ -65,5 +67,9 @@ public interface LeaderState {
 
   /** Received an {@link AppendEntriesReplyProto} */
   void onAppendEntriesReply(LogAppender appender, AppendEntriesReplyProto reply);
+
+  default Object addPendingRequestNew(Object permit, RaftClientRequest request, TransactionContext entry) {
+    return null;
+  }
 
 }

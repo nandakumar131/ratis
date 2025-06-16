@@ -42,6 +42,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.WritableByteChannel;
 import java.util.Collection;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.function.Function;
 
@@ -590,6 +591,11 @@ public interface StateMachine extends Closeable {
    *         and then replied to the client.
    */
   CompletableFuture<Message> applyTransaction(TransactionContext trx);
+
+  default Message applyTransactionSync(TransactionContext trx)
+      throws ExecutionException, InterruptedException {
+    return applyTransaction(trx).get();
+  }
 
   /** @return the last term-index applied by this {@link StateMachine}. */
   TermIndex getLastAppliedTermIndex();

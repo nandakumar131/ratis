@@ -277,21 +277,26 @@ class SegmentedRaftLogWorker {
   private Task addIOTask(Task task) {
     LOG.debug("{} adds IO task {}", name, task);
     try(UncheckedAutoCloseable ignored = raftLogMetrics.startQueuingDelayTimer()) {
-      for(; !queue.offer(task, ONE_SECOND); ) {
+      task.execute();
+      task.done();
+      /*
+     for(; !queue.offer(task, ONE_SECOND); ) {
         Preconditions.assertTrue(isAlive(),
             "the worker thread is not alive");
       }
+    */
     } catch (Exception e) {
+      /*
       if (e instanceof InterruptedException && !running) {
         LOG.info("Got InterruptedException when adding task " + task
             + ". The SegmentedRaftLogWorker already stopped.");
         Thread.currentThread().interrupt();
       } else {
+       */
         LOG.error("Failed to add IO task {}", task, e);
         Optional.ofNullable(server).ifPresent(RaftServer.Division::close);
       }
-    }
-    task.startTimerOnEnqueue(raftLogMetrics.getEnqueuedTimer());
+      //}
     return task;
   }
 

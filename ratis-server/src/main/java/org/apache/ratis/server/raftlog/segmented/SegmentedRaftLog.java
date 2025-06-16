@@ -389,6 +389,59 @@ public final class SegmentedRaftLog extends RaftLogBase {
   }
 
   @Override
+  public Long appendEntryImplSync(LogEntryProto entry, TransactionContext context) {
+    checkLogState();
+    final LogEntryProto removedStateMachineData = LogProtoUtils.removeStateMachineData(entry);
+    try(AutoCloseableLock writeLock = writeLock()) {
+      final Timekeeper.Context appendEntryTimerContext = getRaftLogMetrics().startAppendEntryTimer();
+      validateLogEntry(entry);
+      final LogSegment currentOpenSegment = cache.getOpenSegment();
+      boolean rollOpenSegment = false;
+      if (currentOpenSegment == null) {
+        cache.addOpenSegment(entry.getIndex());
+        fileLogWorker.startLogSegment(entry.getIndex());
+      } else if (isSegmentFull(currentOpenSegment, removedStateMachineData)) {
+        rollOpenSegment = true;
+      } else {
+        final TermIndex last = currentOpenSegment.getLastTermIndex();
+        if (last != null && last.getTerm() != entry.getTerm()) {
+          // the term changes
+          Preconditions.assertTrue(last.getTerm() < entry.getTerm(),
+              "open segment's term %s is larger than the new entry's term %s",
+              last.getTerm(), entry.getTerm());
+          rollOpenSegment = true;
+        }
+      }
+
+      if (rollOpenSegment) {
+        cache.rollOpenSegment(true);
+        fileLogWorker.rollLogSegment(currentOpenSegment);
+        cacheEviction.signal();
+      }
+
+      // If the entry has state machine data, then the entry should be inserted
+      // to statemachine first and then to the cache. Not following the order
+      // will leave a spurious entry in the cache.
+      CompletableFuture<Long> writeFuture =
+          fileLogWorker.writeLogEntry(entry, context).getFuture();
+      if (stateMachineCachingEnabled) {
+        // The stateMachineData will be cached inside the StateMachine itself.
+        cache.appendEntry(LogProtoUtils.removeStateMachineData(entry),
+            LogSegment.Op.WRITE_CACHE_WITH_STATE_MACHINE_CACHE);
+      } else {
+        cache.appendEntry(entry, LogSegment.Op.WRITE_CACHE_WITHOUT_STATE_MACHINE_CACHE);
+      }
+      writeFuture.whenComplete((clientReply, exception) -> appendEntryTimerContext.stop());
+      Long result = writeFuture.get();
+      appendEntryTimerContext.stop();
+      return result;
+    } catch (Exception e) {
+      LOG.error("{}: Failed to append {}", getName(), toLogEntryString(entry), e);
+      throw new RuntimeException(e);
+    }
+  }
+
+  @Override
   protected CompletableFuture<Long> appendEntryImpl(LogEntryProto entry, TransactionContext context) {
     checkLogState();
     if (LOG.isTraceEnabled()) {

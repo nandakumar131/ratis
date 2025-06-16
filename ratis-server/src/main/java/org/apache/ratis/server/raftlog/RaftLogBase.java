@@ -17,13 +17,16 @@
  */
 package org.apache.ratis.server.raftlog;
 
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.ratis.conf.RaftProperties;
 import org.apache.ratis.proto.RaftProtos.LogEntryProto;
+import org.apache.ratis.protocol.RaftClientRequest;
 import org.apache.ratis.protocol.RaftGroupMemberId;
 import org.apache.ratis.protocol.exceptions.StateMachineException;
 import org.apache.ratis.server.RaftConfiguration;
 import org.apache.ratis.server.RaftServerConfigKeys;
+import org.apache.ratis.server.leader.LeaderState;
 import org.apache.ratis.server.protocol.TermIndex;
 import org.apache.ratis.statemachine.TransactionContext;
 import org.apache.ratis.thirdparty.com.google.protobuf.ByteString;
@@ -169,6 +172,10 @@ public abstract class RaftLogBase implements RaftLog {
     return runner.runSequentially(() -> appendImpl(term, transaction));
   }
 
+  public final Object appendSync(long term, TransactionContext transaction,  LeaderState leaderState, Object permit, RaftClientRequest request) throws StateMachineException {
+    return appendImplSync(term, transaction, leaderState, permit, request);
+  }
+
   private long appendImpl(long term, TransactionContext operation) throws StateMachineException {
     checkLogState();
     try(AutoCloseableLock writeLock = writeLock()) {
@@ -209,6 +216,37 @@ public abstract class RaftLogBase implements RaftLog {
         }
       });
       return nextIndex;
+    }
+  }
+
+  private Object appendImplSync(long term, TransactionContext operation,  LeaderState leaderState, Object permit, RaftClientRequest request) throws StateMachineException {
+    checkLogState();
+    try(AutoCloseableLock writeLock = writeLock()) {
+      final long nextIndex = getNextIndex();
+
+      // This is called here to guarantee strict serialization of callback executions in case
+      // the SM wants to attach a logic depending on ordered execution in the log commit order.
+      try {
+        operation = operation.preAppendTransaction();
+      } catch (StateMachineException e) {
+        throw e;
+      } catch (IOException e) {
+        throw new StateMachineException(memberId, e);
+      }
+
+      // build the log entry after calling the StateMachine
+      final LogEntryProto e = operation.initLogEntry(term, nextIndex);
+
+      // Add here
+      Object toReturn = leaderState.addPendingRequestNew(permit, request, operation);
+
+      int entrySize = e.getSerializedSize();
+      if (entrySize > maxBufferSize) {
+        throw new StateMachineException(memberId, new RaftLogIOException(
+            "Log entry size " + entrySize + " exceeds the max buffer limit of " + maxBufferSize));
+      }
+      appendEntrySync(e, operation);
+      return toReturn;
     }
   }
 
@@ -351,6 +389,19 @@ public abstract class RaftLogBase implements RaftLog {
   @Override
   public final CompletableFuture<Long> appendEntry(LogEntryProto entry, TransactionContext context) {
     return runner.runSequentially(() -> appendEntryImpl(entry, context));
+  }
+
+  public final Long appendEntrySync(LogEntryProto entry,
+                                    TransactionContext context) {
+    return appendEntryImplSync(entry, context);
+  }
+
+  public Long appendEntryImplSync(LogEntryProto entry, TransactionContext context) {
+    try {
+      return appendEntryImpl(entry, context).get();
+    } catch (InterruptedException | ExecutionException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   protected abstract CompletableFuture<Long> appendEntryImpl(LogEntryProto entry, TransactionContext context);

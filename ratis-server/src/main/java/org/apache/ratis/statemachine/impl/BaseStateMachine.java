@@ -42,6 +42,7 @@ import java.util.Objects;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -49,6 +50,8 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public class BaseStateMachine implements StateMachine, StateMachine.DataApi,
     StateMachine.EventApi, StateMachine.LeaderEventApi, StateMachine.FollowerEventApi {
+
+  protected AtomicLong stateMachineTime = new AtomicLong();
   private final CompletableFuture<RaftServer> server = new CompletableFuture<>();
   @SuppressWarnings({"squid:S3077"}) // Suppress volatile for generic type
   private volatile RaftGroupId groupId;

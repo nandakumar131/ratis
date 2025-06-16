@@ -48,6 +48,17 @@ class PendingRequest {
     }
   }
 
+  PendingRequest(RaftClientRequest request, TransactionContext entry, TermIndex termIndex) {
+    this.termIndex = termIndex;
+    this.request = request;
+    this.entry = entry;
+    if (request.is(TypeCase.FORWARD)) {
+      futureToReturn = futureToComplete.thenApply(reply -> convert(request, reply));
+    } else {
+      futureToReturn = futureToComplete;
+    }
+  }
+
   PendingRequest(SetConfigurationRequest request) {
     this(request, null);
   }

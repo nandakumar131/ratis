@@ -809,6 +809,67 @@ class RaftServerImpl implements RaftServer.Division,
         getMemberId() + " is not in " + expected + ": current state is " + c), expected);
   }
 
+  private RaftClientReply appendTransactionSync(RaftClientRequest request, TransactionContextImpl context, CacheEntry cacheEntry) {
+    Objects.requireNonNull(request, "request == null");
+    CodeInjectionForTesting.execute(APPEND_TRANSACTION, getId(),
+        request.getClientId(), request, context, cacheEntry);
+
+    final PendingRequest pending;
+    synchronized (this) {
+      final CompletableFuture<RaftClientReply> reply =
+          checkLeaderState(request, cacheEntry);
+      if (reply != null) {
+        try {
+          return reply.get();
+        } catch (InterruptedException | ExecutionException e) {
+          throw new RuntimeException(e);
+        }
+      }
+      // append the message to its local log
+      final LeaderStateImpl leaderState = role.getLeaderStateNonNull();
+      writeIndexCache.add(request.getClientId(), context.getLogIndexFuture());
+
+      final PendingRequests.Permit permit =
+          leaderState.tryAcquirePendingRequest(request.getMessage());
+      if (permit == null) {
+        return newExceptionReply(request,
+            new ResourceUnavailableException(getMemberId() +
+                ": Failed to acquire a pending write request for " + request));
+      }
+      try {
+        assertLifeCycleState(LifeCycle.States.RUNNING);
+        pending = state.appendLogNew(context, leaderState, permit, request);
+      } catch (StateMachineException e) {
+        // leader will step down here
+        if (e.leaderShouldStepDown() && getInfo().isLeader()) {
+          leaderState.submitStepDownEvent(
+              LeaderState.StepDownReason.STATE_MACHINE_EXCEPTION);
+        }
+        // the StateMachineException is thrown by the SM in the preAppend stage.
+        // Return the exception in a RaftClientReply.
+        return newExceptionReply(request, e);
+      } catch (ServerNotReadyException e) {
+        return newExceptionReply(request, e);
+      }
+
+      // put the request into the pending queue
+      if (pending == null) {
+        return newExceptionReply(request, new ResourceUnavailableException(
+            getMemberId() + ": Failed to add a pending write request for " +
+                request));
+      }
+      leaderState.notifySenders();
+    }
+
+    // Make the pending request wait!
+    // Change the below code
+    try {
+      return pending.getFuture().get();
+    } catch (InterruptedException | ExecutionException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
   /**
    * Handle a normal update request from client.
    */
@@ -935,7 +996,26 @@ class RaftServerImpl implements RaftServer.Division,
     });
   }
 
-  private CompletableFuture<RaftClientReply> replyFuture(RaftClientRequest request) throws IOException {
+  public RaftClientReply submitClientRequestSync(
+      RaftClientRequest request) {
+    try {
+      assertLifeCycleState(LifeCycle.States.RUNNING);
+      RaftClientRequest.Type type = request.getType();
+      final Timekeeper timer = raftServerMetrics.getClientRequestTimer(type);
+      final Optional<Timekeeper.Context> timerContext = Optional.ofNullable(timer).map(Timekeeper::time);
+      RaftClientReply reply = replySync(request);
+      timerContext.ifPresent(Timekeeper.Context::stop);
+      return reply;
+    } catch (RaftException e) {
+      return newExceptionReply(request, e);
+    } catch (Throwable t) {
+      LOG.error("{} Failed to submitClientRequestAsync for {}", getMemberId(), request, t);
+      t.printStackTrace();
+      return newExceptionReply(request, new RaftException(t));
+    }
+  }
+
+    private CompletableFuture<RaftClientReply> replyFuture(RaftClientRequest request) throws IOException {
     retryCache.invalidateRepliedRequests(request);
 
     final TypeCase type = request.getType().getTypeCase();
@@ -956,6 +1036,19 @@ class RaftServerImpl implements RaftServer.Division,
     }
   }
 
+  private RaftClientReply replySync(RaftClientRequest request) {
+    retryCache.invalidateRepliedRequests(request);
+
+    final TypeCase type = request.getType().getTypeCase();
+    switch (type) {
+    case WRITE:
+    case FORWARD:
+      return writeSync(request);
+    default:
+      throw new IllegalStateException("Unexpected request type: " + type + ", request=" + request);
+    }
+  }
+
   private CompletableFuture<RaftClientReply> writeAsync(RaftClientRequest request) throws IOException {
     final CompletableFuture<RaftClientReply> future = writeAsyncImpl(request);
     if (request.is(TypeCase.WRITE)) {
@@ -966,6 +1059,47 @@ class RaftServerImpl implements RaftServer.Division,
       }
     }
     return future;
+  }
+
+  private RaftClientReply writeSync(RaftClientRequest request) {
+    final RaftClientReply reply = writeSyncImpl(request);
+    if (request.is(TypeCase.WRITE)) {
+      // check replication
+      final ReplicationLevel replication = request.getType().getWrite().getReplication();
+      if (replication != ReplicationLevel.MAJORITY) {
+        waitForReplication(reply, replication);
+      }
+    }
+    return reply;
+  }
+
+  private RaftClientReply writeSyncImpl(RaftClientRequest request) {
+    final RetryCacheImpl.CacheQueryResult queryResult = retryCache.queryCache(request);
+    final CacheEntry cacheEntry = queryResult.getEntry();
+    if (queryResult.isRetry()) {
+      // return the cached future.
+      try {
+        return cacheEntry.getReplyFuture().get();
+      } catch (InterruptedException | ExecutionException e) {
+        throw new RuntimeException(e);
+      }
+    }
+    final TransactionContextImpl context;
+    try {
+      context = (TransactionContextImpl) stateMachine.startTransaction(request);
+    } catch (IOException e) {
+      final RaftClientReply exceptionReply = newExceptionReply(request,
+          new RaftException("Failed to startTransaction for " + request, e));
+      cacheEntry.failWithReply(exceptionReply);
+      return exceptionReply;
+    }
+    if (context.getException() != null) {
+      final StateMachineException e = new StateMachineException(getMemberId(), context.getException());
+      final RaftClientReply exceptionReply = newExceptionReply(request, e);
+      cacheEntry.failWithReply(exceptionReply);
+      return exceptionReply;
+    }
+    return appendTransactionSync(request, context, cacheEntry);
   }
 
   private CompletableFuture<RaftClientReply> writeAsyncImpl(RaftClientRequest request) throws IOException {
@@ -1141,7 +1275,7 @@ class RaftServerImpl implements RaftServer.Division,
   @Override
   public RaftClientReply submitClientRequest(RaftClientRequest request)
       throws IOException {
-    return waitForReply(request, submitClientRequestAsync(request));
+    return submitClientRequestSync(request);
   }
 
   RaftClientReply waitForReply(RaftClientRequest request, CompletableFuture<RaftClientReply> future)
@@ -1802,6 +1936,28 @@ class RaftServerImpl implements RaftServer.Division,
     });
   }
 
+  private Message replyPendingRequestSync(
+      ClientInvocationId invocationId, TermIndex termIndex, Message smResponse) {
+    // update the retry cache
+    final CacheEntry cacheEntry = retryCache.getOrCreateEntry(invocationId);
+    Objects.requireNonNull(cacheEntry , "cacheEntry == null");
+    if (getInfo().isLeader() && cacheEntry.isCompletedNormally()) {
+      LOG.warn("{} retry cache entry of leader should be pending: {}", this, cacheEntry);
+    }
+    if (cacheEntry.isFailed()) {
+      retryCache.refreshEntry(new CacheEntry(cacheEntry.getKey()));
+    }
+    getTransactionManager().remove(termIndex);
+    final RaftClientReply.Builder b = newReplyBuilder(invocationId, termIndex.getIndex());
+    final RaftClientReply r;
+    r = b.setSuccess().setMessage(smResponse).build();
+    // update pending request
+    role.getLeaderState().ifPresent(leader -> leader.replyPendingRequest(termIndex, r));
+    cacheEntry.updateResult(r);
+
+    return smResponse;
+  }
+
   TransactionManager getTransactionManager() {
     return transactionManager;
   }
@@ -1831,6 +1987,53 @@ class RaftServerImpl implements RaftServer.Division,
     return getTransactionManager().computeIfAbsent(termIndex,
         // call startTransaction only once
         MemoizedSupplier.valueOf(() -> stateMachine.startTransaction(entry, getInfo().getCurrentRole())));
+  }
+
+  Message applyLogToStateMachineSync(LogEntryProto next)
+      throws RaftLogIOException {
+    Message messageFuture = null;
+
+    switch (next.getLogEntryBodyCase()) {
+    case CONFIGURATIONENTRY:
+      // the reply should have already been set. only need to record
+      // the new conf in the metadata file and notify the StateMachine.
+      state.writeRaftConfiguration(next);
+      stateMachine.event()
+          .notifyConfigurationChanged(next.getTerm(), next.getIndex(),
+              next.getConfigurationEntry());
+      role.getLeaderState().ifPresent(leader -> leader.checkReady(next));
+      break;
+    case STATEMACHINELOGENTRY:
+
+      TransactionContext trx = getTransactionContext(next, true);
+      Objects.requireNonNull(trx, "trx == null");
+      final ClientInvocationId invocationId = ClientInvocationId.valueOf(next.getStateMachineLogEntry());
+      writeIndexCache.add(invocationId.getClientId(), ((TransactionContextImpl) trx).getLogIndexFuture());
+
+      try {
+        // Let the StateMachine inject logic for committed transactions in sequential order.
+        trx = stateMachine.applyTransactionSerial(trx);
+
+        final Message stateMachineResponse =
+            stateMachine.applyTransactionSync(trx);
+        messageFuture =
+            replyPendingRequestSync(invocationId, TermIndex.valueOf(next),
+                stateMachineResponse);
+      } catch (Exception e) {
+        throw new RaftLogIOException(e);
+      }
+      break;
+    case METADATAENTRY:
+      break;
+    default:
+      throw new IllegalStateException(
+          "Unexpected LogEntryBodyCase " + next.getLogEntryBodyCase() +
+              ", next=" + next);
+    }
+    if (next.getLogEntryBodyCase() != LogEntryProto.LogEntryBodyCase.STATEMACHINELOGENTRY) {
+      stateMachine.event().notifyTermIndexUpdated(next.getTerm(), next.getIndex());
+    }
+    return messageFuture;
   }
 
   CompletableFuture<Message> applyLogToStateMachine(LogEntryProto next) throws RaftLogIOException {

@@ -18,8 +18,10 @@
 package org.apache.ratis.server.raftlog;
 
 import org.apache.ratis.proto.RaftProtos.LogEntryProto;
+import org.apache.ratis.protocol.RaftClientRequest;
 import org.apache.ratis.protocol.exceptions.StateMachineException;
 import org.apache.ratis.server.RaftConfiguration;
+import org.apache.ratis.server.leader.LeaderState;
 import org.apache.ratis.statemachine.TransactionContext;
 import org.apache.ratis.util.Preconditions;
 import org.apache.ratis.util.StringUtils;
@@ -94,6 +96,7 @@ interface RaftLogSequentialOps {
    * @return the index of the new log entry.
    */
   long append(long term, TransactionContext transaction) throws StateMachineException;
+  Object appendSync(long term, TransactionContext transaction,  LeaderState leaderState, Object permit, RaftClientRequest request) throws StateMachineException;
 
   /**
    * Append asynchronously a log entry for the given term and configuration

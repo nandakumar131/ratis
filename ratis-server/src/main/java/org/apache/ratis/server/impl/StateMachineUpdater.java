@@ -190,7 +190,7 @@ class StateMachineUpdater implements Runnable {
           reload();
         }
 
-        applyLogFutures = applyLog(applyLogFutures);
+        applyLogFutures = applyLogSync(applyLogFutures);
         checkAndTakeSnapshot(applyLogFutures);
 
         if (shouldStop()) {
@@ -271,6 +271,23 @@ class StateMachineUpdater implements Runnable {
         break;
       }
     }
+    return applyLogFutures;
+  }
+
+  public synchronized CompletableFuture<Void> applyLogSync(CompletableFuture<Void> applyLogFutures) throws RaftLogIOException {
+    final long committed = raftLog.getLastCommittedIndex();
+    for(long applied; (applied = getLastAppliedIndex()) < committed && state == State.RUNNING && !shouldStop(); ) {
+      final long nextIndex = applied + 1;
+      final LogEntryProto next = raftLog.get(nextIndex);
+      if (next == null) {
+        break;
+      }
+      server.applyLogToStateMachineSync(next);
+      final long incremented = appliedIndex.incrementAndGet(debugIndexChange);
+      Preconditions.assertTrue(incremented == nextIndex);
+      notifyAppliedIndex(incremented);
+    }
+    applyLogFutures.complete(null);
     return applyLogFutures;
   }
 

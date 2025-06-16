@@ -24,6 +24,7 @@ import org.apache.ratis.protocol.exceptions.StateMachineException;
 import org.apache.ratis.server.RaftConfiguration;
 import org.apache.ratis.server.RaftServerConfigKeys;
 import org.apache.ratis.server.impl.LeaderElection.Phase;
+import org.apache.ratis.server.leader.LeaderState;
 import org.apache.ratis.server.protocol.TermIndex;
 import org.apache.ratis.server.raftlog.LogProtoUtils;
 import org.apache.ratis.server.raftlog.RaftLog;
@@ -317,6 +318,12 @@ class ServerState {
     }
 
     return lastEntry;
+  }
+
+  PendingRequest appendLogNew(TransactionContext operation, LeaderState leaderState, Object permit, RaftClientRequest request) throws StateMachineException {
+    Object pendingRequest = getLog().appendSync(currentTerm.get(), operation, leaderState, permit, request);
+    Objects.requireNonNull(operation.getLogEntry(), "transaction-logEntry");
+    return (PendingRequest) pendingRequest;
   }
 
   void appendLog(TransactionContext operation) throws StateMachineException {
