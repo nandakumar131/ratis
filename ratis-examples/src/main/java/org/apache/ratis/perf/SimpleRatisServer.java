@@ -50,19 +50,16 @@ import org.apache.ratis.util.TimeDuration;
 
 public class SimpleRatisServer {
 
-  private final String storageDir;
-  private final int port;
   private final RaftProperties properties;
   private final RaftPeerId peerId;
   private final RaftGroupId raftGroupId;
   private final RaftServer raftServer;
   private final RaftServer.Division division;
   private final AtomicLong callId;
+  private final ClientId clientId;
 
   public SimpleRatisServer(String peerId, int port, String peerAddress,
                            String storageDir) throws IOException {
-    this.storageDir = storageDir;
-    this.port = port;
     this.properties = getRaftProperties(storageDir, port);
     this.peerId = RaftPeerId.getRaftPeerId(peerId);
     this.raftGroupId = RaftGroupId.valueOf(
@@ -71,7 +68,7 @@ public class SimpleRatisServer {
     this.raftServer = getRaftServer(group);
     this.division = raftServer.getDivision(raftGroupId);
     this.callId = new AtomicLong();
-
+    this.clientId = ClientId.randomId();
   }
 
   public void start() throws IOException {
@@ -91,16 +88,14 @@ public class SimpleRatisServer {
   public boolean submitRequest(final ByteString request)
       throws IOException {
     final RaftClientRequest raftClientRequest = RaftClientRequest.newBuilder()
-        .setClientId(ClientId.randomId())
+        .setClientId(clientId)
         .setServerId(peerId)
         .setGroupId(raftGroupId)
         .setCallId(nextCallId())
         .setMessage(Message.valueOf(request))
         .setType(RaftClientRequest.writeRequestType())
         .build();
-    long start = System.currentTimeMillis();
     final RaftClientReply raftClientReply = raftServer.submitClientRequest(raftClientRequest);
-    long end = System.currentTimeMillis();
     return raftClientReply.isSuccess();
   }
 
@@ -133,14 +128,15 @@ public class SimpleRatisServer {
     RaftServerConfigKeys.Snapshot.setAutoTriggerEnabled(prop, false);
     RaftServerConfigKeys.Snapshot.setAutoTriggerThreshold(prop, 1000000L);
     RaftServerConfigKeys.LeaderElection.setPreVote(prop, true);
+    RaftServerConfigKeys.LeaderElection.setLeaderStepDownWaitTime(prop, TimeDuration.valueOf(30, TimeUnit.SECONDS));
 
     RaftConfigKeys.Rpc.setType(prop, RpcType.valueOf("GRPC"));
 
     GrpcConfigKeys.Server.setPort(prop, port);
     GrpcConfigKeys.setMessageSizeMax(prop, SizeInBytes.valueOf(logAppenderQueueByteLimit.getSize() + SizeInBytes.ONE_MB.getSize()));
 
-    RaftServerConfigKeys.Write.setElementLimit(prop, 40960);
-    RaftServerConfigKeys.Write.setByteLimit(prop, SizeInBytes.valueOf("1000MB"));
+    //RaftServerConfigKeys.Write.setElementLimit(prop, 40960);
+    //RaftServerConfigKeys.Write.setByteLimit(prop, SizeInBytes.valueOf("1000MB"));
 
 
     //RaftServerConfigKeys.Log.setLogMetadataEnabled(prop, false);
