@@ -62,9 +62,8 @@ public class SimpleRatisServer {
                            String storageDir) throws IOException {
     this.properties = getRaftProperties(storageDir, port);
     this.peerId = RaftPeerId.getRaftPeerId(peerId);
-    this.raftGroupId = RaftGroupId.valueOf(
-        UUID.fromString("152547C8-B868-42E0-901E-634A075C05EE"));
-    RaftGroup group = buildRaftGroup(raftGroupId, peerAddress);
+    this.raftGroupId = SimpleMain.getRaftGroupId();
+    RaftGroup group = SimpleMain.buildRaftGroup(raftGroupId, peerAddress);
     this.raftServer = getRaftServer(group);
     this.division = raftServer.getDivision(raftGroupId);
     this.callId = new AtomicLong();
@@ -145,23 +144,7 @@ public class SimpleRatisServer {
     return prop;
   }
 
-  private RaftGroup buildRaftGroup(RaftGroupId groupId , String peerAddress) {
-    final List<RaftPeer> raftPeers = new ArrayList<>();
-    final RaftPeerId[] peerIds = new RaftPeerId[3];
 
-    peerIds[0] = RaftPeerId.getRaftPeerId("peer-one");
-    peerIds[1] = RaftPeerId.getRaftPeerId("peer-two");
-    peerIds[2] = RaftPeerId.getRaftPeerId("peer-three");
-
-    final String[] addresses = peerAddress.split(",");
-
-    for (int i = 0; i < addresses.length; i++) {
-      System.out.println(addresses[i]);
-      final RaftPeer peer = RaftPeer.newBuilder().setId(peerIds[i]).setAddress(addresses[i]).build();
-      raftPeers.add(peer);
-    }
-    return RaftGroup.valueOf(groupId, raftPeers);
-  }
 
   public void waitForLeaderToBeReady() throws IOException {
     boolean ready;
