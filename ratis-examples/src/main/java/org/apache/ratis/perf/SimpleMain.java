@@ -73,6 +73,33 @@ public class SimpleMain {
       }
     }
 
+    public void submitDirect(SimpleRatisServer server) throws Exception {
+      populateRandomData();
+      long start = System.currentTimeMillis();
+      System.out.println("Starting server...");
+      List<Future<Void>> futures = new ArrayList<>();
+      for (int i = 0; i < threads; i++) {
+        futures.add(CompletableFuture.runAsync(() -> runBatch(server)));
+      }
+      for (Future<Void> future : futures) {
+        future.get();
+      }
+      System.out.println("la fin!");
+      long end = System.currentTimeMillis();
+      System.out.println("Total time taken: " + (end - start) + " ms");
+    }
+
+    public void runBatch(SimpleRatisServer server) {
+      int randomDataSize = randomData.size();
+      try {
+        for (int i = 0; i < transactionCount; i++) {
+          server.submitRequest(randomData.get(i % randomDataSize));
+        }
+      } catch (Exception e) {
+        e.printStackTrace();
+      }
+    }
+
     public void run() throws Exception {
       populateRandomData();
       long start = System.currentTimeMillis();
@@ -80,13 +107,13 @@ public class SimpleMain {
       List<Future<Void>> futures = new ArrayList<>();
       for (int i = 0; i < threads; i++) {
         futures.add(CompletableFuture.runAsync(() -> runBatch(getClient())));
-        for (Future<Void> future : futures) {
-          future.get();
-        }
-        System.out.println("la fin!");
-        long end = System.currentTimeMillis();
-        System.out.println("Total time taken: " + (end - start) + " ms");
       }
+      for (Future<Void> future : futures) {
+        future.get();
+      }
+      System.out.println("la fin!");
+      long end = System.currentTimeMillis();
+      System.out.println("Total time taken: " + (end - start) + " ms");
     }
 
     public void runBatch(RaftClient client) {
@@ -172,8 +199,8 @@ public class SimpleMain {
     }
 
     final String role = args[0];
-    if (!role.equals("server") && !role.equals("client")) {
-      System.out.println("Usage: SimpleMain <server | client>");
+    if (!role.equals("server") && !role.equals("client") && !role.equals("standalone")) {
+      System.out.println("Usage: SimpleMain <server | client | standalone>");
       return;
     }
 
@@ -187,10 +214,11 @@ public class SimpleMain {
       int port = Integer.parseInt(args[2]); // 9898
       String peers = args[3];
       String storageDir = args[4]; // /Users/nvadivelu/Workspace/Ratis/Data
-      SimpleServer main = new SimpleServer(peerId, port, peers, storageDir);
-      main.start();
-      main.stop();
+      SimpleServer server = new SimpleServer(peerId, port, peers, storageDir);
+      server.start();
+      server.stop();
     }
+
 
     if (role.equals("client")) {
       if (args.length != 4) {
@@ -202,6 +230,25 @@ public class SimpleMain {
       int numberOfTransactionsPerThread = Integer.parseInt(args[3]); // 1_000_000
       SimpleClient client = new SimpleClient(peers, numThreads, numberOfTransactionsPerThread);
       client.run();
+    }
+
+    if (role.equals("standalone")) {
+      if(args.length != 7) {
+        System.out.println(
+            "Usage: SimpleMain standalone <peer-id> <port> <comma seperated list of peers> <storageDir> <threadCount> <transactionsPerThread>");
+        return;
+      }
+      String peerId = args[1];
+      int port = Integer.parseInt(args[2]); // 9898
+      String peers = args[3];
+      String storageDir = args[4]; // /Users/nvadivelu/Workspace/Ratis/Data
+      int numThreads = Integer.parseInt(args[5]); // 10
+      int numberOfTransactionsPerThread = Integer.parseInt(args[6]); // 1_000_000
+      SimpleServer server = new SimpleServer(peerId, port, peers, storageDir);
+      SimpleClient client = new SimpleClient(peers, numThreads, numberOfTransactionsPerThread);
+      server.start();
+      client.submitDirect(server.server);
+      server.stop();
     }
   }
 }
