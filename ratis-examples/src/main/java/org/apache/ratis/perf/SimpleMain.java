@@ -44,6 +44,7 @@ public class SimpleMain {
     }
 
     public void start() throws IOException {
+      System.out.println("Starting server...");
       server.start();
     }
 
@@ -76,7 +77,7 @@ public class SimpleMain {
     public void submitDirect(SimpleRatisServer server) throws Exception {
       populateRandomData();
       long start = System.currentTimeMillis();
-      System.out.println("Starting server...");
+      System.out.println("Starting client...");
       List<Future<Void>> futures = new ArrayList<>();
       for (int i = 0; i < threads; i++) {
         futures.add(CompletableFuture.runAsync(() -> runBatch(server)));
@@ -103,7 +104,7 @@ public class SimpleMain {
     public void run() throws Exception {
       populateRandomData();
       long start = System.currentTimeMillis();
-      System.out.println("Starting server...");
+      System.out.println("Starting client...");
       List<Future<Void>> futures = new ArrayList<>();
       for (int i = 0; i < threads; i++) {
         futures.add(CompletableFuture.runAsync(() -> runBatch(getClient())));
