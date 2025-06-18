@@ -184,7 +184,6 @@ public class SimpleMain {
     final String[] addresses = peerAddress.split(",");
 
     for (int i = 0; i < addresses.length; i++) {
-      System.out.println(addresses[i]);
       final RaftPeer peer = RaftPeer.newBuilder().setId(peerIds[i]).setAddress(addresses[i]).build();
       raftPeers.add(peer);
     }
